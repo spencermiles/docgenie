@@ -302,9 +302,16 @@ def main():
     # Generate documentation
     documentation = generate_documentation_with_gemini(prompt, api_key)
     
+    # Add GenAI attribution footer
+    footer = """
+
+### Generated with GenAI
+This document was generated with [docgenie](https://github.com/spencermiles/docgenie) using Gemini 2.5. Some inaccuracies may be present as a result.
+"""
+    
     # Write documentation to file
     with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(documentation)
+        f.write(documentation + footer)
     
     print(f"Documentation generated successfully: {output_path}")
 
