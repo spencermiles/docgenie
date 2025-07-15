@@ -41,6 +41,7 @@ ALLOWED_EXTENSIONS = {
     # Other common code files
     '.html', '.css', '.scss', '.sass', '.less',
     '.sql', '.graphql', '.gql',
+    '.sh', '.py',
     # Build & Config files (without extension)
     ''  # This allows files without extensions like Dockerfile, Makefile, etc.
 }
@@ -59,15 +60,25 @@ class FileContent:
     loc: int  # Lines of Code count
 
 
-def get_all_files_recursively(directory: Path, additional_excludes: List[str] = None) -> List[FileContent]:
+@dataclass
+class IgnoredFile:
+    """Represents an ignored file and the reason it was ignored"""
+    path: str
+    size: int
+    reason: str
+
+
+def get_all_files_recursively(directory: Path, additional_excludes: List[str] = None, track_ignored: bool = False) -> tuple[List[FileContent], List[IgnoredFile]]:
     """
     Recursively get all files from the directory and return their contents.
     Skips binary files, lock files, migrations, and common non-code directories.
+    Returns tuple of (included_files, ignored_files) if track_ignored is True, else (included_files, [])
     """
     import fnmatch
     
     additional_excludes = additional_excludes or []
     files = []
+    ignored_files_info = []
     
     for root, dirs, filenames in os.walk(directory):
         # Skip certain directories
@@ -79,23 +90,65 @@ def get_all_files_recursively(directory: Path, additional_excludes: List[str] = 
             
             # Skip specific files (lock files, etc.)
             if filename in SKIP_FILES:
+                if track_ignored:
+                    try:
+                        file_size = file_path.stat().st_size
+                    except (OSError, PermissionError):
+                        file_size = 0
+                    ignored_files_info.append(IgnoredFile(
+                        path=str(relative_path),
+                        size=file_size,
+                        reason="Lock file or dependency file"
+                    ))
                 continue
             
             # Only include files with allowed extensions
             if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
+                if track_ignored:
+                    try:
+                        file_size = file_path.stat().st_size
+                    except (OSError, PermissionError):
+                        file_size = 0
+                    ignored_files_info.append(IgnoredFile(
+                        path=str(relative_path),
+                        size=file_size,
+                        reason=f"Unsupported extension: {file_path.suffix or '(no extension)'}"
+                    ))
                 continue
                 
             # Skip hidden files
             if filename.startswith('.'):
+                if track_ignored:
+                    try:
+                        file_size = file_path.stat().st_size
+                    except (OSError, PermissionError):
+                        file_size = 0
+                    ignored_files_info.append(IgnoredFile(
+                        path=str(relative_path),
+                        size=file_size,
+                        reason="Hidden file"
+                    ))
                 continue
             
             # Check additional exclusions (supports glob patterns)
             skip_file = False
+            matched_pattern = None
             for exclude_pattern in additional_excludes:
                 if fnmatch.fnmatch(str(relative_path), exclude_pattern) or fnmatch.fnmatch(filename, exclude_pattern):
+                    matched_pattern = exclude_pattern
                     skip_file = True
                     break
             if skip_file:
+                if track_ignored:
+                    try:
+                        file_size = file_path.stat().st_size
+                    except (OSError, PermissionError):
+                        file_size = 0
+                    ignored_files_info.append(IgnoredFile(
+                        path=str(relative_path),
+                        size=file_size,
+                        reason=f"Excluded by pattern: {matched_pattern}"
+                    ))
                 continue
                 
             try:
@@ -106,6 +159,12 @@ def get_all_files_recursively(directory: Path, additional_excludes: List[str] = 
                 # Skip very large files (>1MB)
                 if len(content) > 1024 * 1024:
                     print(f"Skipping large file: {file_path}")
+                    if track_ignored:
+                        ignored_files_info.append(IgnoredFile(
+                            path=str(relative_path),
+                            size=len(content),
+                            reason="File too large (>1MB)"
+                        ))
                     continue
                 
                 relative_path = file_path.relative_to(directory)
@@ -121,23 +180,44 @@ def get_all_files_recursively(directory: Path, additional_excludes: List[str] = 
                 
             except (UnicodeDecodeError, PermissionError, OSError) as e:
                 print(f"Skipping file {file_path}: {e}")
+                if track_ignored:
+                    try:
+                        file_size = file_path.stat().st_size
+                    except (OSError, PermissionError):
+                        file_size = 0
+                    ignored_files_info.append(IgnoredFile(
+                        path=str(relative_path),
+                        size=file_size,
+                        reason=f"Read error: {type(e).__name__}"
+                    ))
                 continue
     
-    return files
+    return files, ignored_files_info
 
 
 def create_documentation_prompt(files: List[FileContent], repo_path: str, prompt_file: str) -> str:
     """Create a comprehensive prompt for documentation generation"""
     
+    # Resolve prompt file path - if not absolute, make it relative to script location
+    if not Path(prompt_file).is_absolute():
+        script_dir = Path(__file__).parent
+        prompt_file_path = script_dir / prompt_file
+    else:
+        prompt_file_path = Path(prompt_file)
+    
+    print(f"Looking for prompt file: {prompt_file_path}")
+    
     # Load prompt template from file
     try:
-        with open(prompt_file, 'r', encoding='utf-8') as f:
+        with open(prompt_file_path, 'r', encoding='utf-8') as f:
             prompt_template = f.read()
     except FileNotFoundError:
-        print(f"Error: Prompt file '{prompt_file}' not found")
+        print(f"Error: Prompt file '{prompt_file_path}' not found")
+        print(f"Script location: {Path(__file__).parent}")
+        print(f"Current working directory: {Path.cwd()}")
         sys.exit(1)
     except Exception as e:
-        print(f"Error reading prompt file '{prompt_file}': {e}")
+        print(f"Error reading prompt file '{prompt_file_path}': {e}")
         sys.exit(1)
     
     # Create file listing with content
@@ -154,14 +234,21 @@ def create_documentation_prompt(files: List[FileContent], repo_path: str, prompt
     return prompt
 
 
-def generate_documentation_with_gemini(prompt: str, api_key: str) -> str:
+def generate_documentation_with_gemini(prompt: str, api_key: str, response_prefix: str = None, system_instruction: str = None) -> str:
     """Generate documentation using Gemini 2.5 Pro"""
     
     # Configure Gemini
     genai.configure(api_key=api_key)
     
-    # Use Gemini 2.5 Pro
-    model = genai.GenerativeModel(MODEL)
+    # Use Gemini 2.5 Pro with optional system instruction
+    if system_instruction:
+        model = genai.GenerativeModel(MODEL, system_instruction=system_instruction)
+    else:
+        model = genai.GenerativeModel(MODEL)
+    
+    # Add response prefix instruction to prompt if specified
+    if response_prefix:
+        prompt = f"{prompt}\n\nIMPORTANT: Start your response with exactly this character or text: '{response_prefix}'"
     
     try:
         response = model.generate_content(
@@ -218,7 +305,15 @@ def main():
     parser.add_argument(
         "--prompt",
         default="prompts/readme.txt",
-        help="Path to the prompt template file (default: prompts/readme.txt)"
+        help="Path to the prompt template file (default: prompts/readme.txt, relative to script location)"
+    )
+    parser.add_argument(
+        "--response-prefix",
+        help="Specific character or text that the LLM should start its response with"
+    )
+    parser.add_argument(
+        "--system-instruction",
+        help="System instruction to control the model's behavior and response format"
     )
     
     args = parser.parse_args()
@@ -242,7 +337,7 @@ def main():
     print(f"Scanning directory: {code_dir}")
     
     # Get all files recursively
-    files = get_all_files_recursively(code_dir, args.exclude)
+    files, ignored_files_info = get_all_files_recursively(code_dir, args.exclude, track_ignored=True)
     
     if not files:
         print("No suitable files found in the directory")
@@ -273,6 +368,35 @@ def main():
         print(f"  Medium files (1K-10K):     {len(medium_files):3d} files, {sum(f.size for f in medium_files):,} chars, {sum(f.loc for f in medium_files):,} LOC")
         print(f"  Small files (<1K chars):   {len(small_files):3d} files, {sum(f.size for f in small_files):,} chars, {sum(f.loc for f in small_files):,} LOC")
     
+        # Show ignored files information
+        if ignored_files_info:
+            print(f"\nIgnored files analysis:")
+            print(f"Total ignored files: {len(ignored_files_info)}")
+            
+            # Show largest ignored files
+            sorted_ignored = sorted(ignored_files_info, key=lambda f: f.size, reverse=True)
+            print(f"\nLargest ignored files:")
+            for i, ignored_file in enumerate(sorted_ignored[:10], 1):  # Show top 10 ignored files
+                size_str = f"{ignored_file.size:,}" if ignored_file.size > 0 else "unknown"
+                print(f"{i:2d}. {ignored_file.path:<50} {size_str:>12} bytes - {ignored_file.reason}")
+            
+            if len(ignored_files_info) > 10:
+                print(f"    ... and {len(ignored_files_info) - 10} more ignored files")
+            
+            # Show ignored files by reason
+            from collections import defaultdict
+            reasons_count = defaultdict(int)
+            reasons_size = defaultdict(int)
+            for ignored_file in ignored_files_info:
+                reasons_count[ignored_file.reason] += 1
+                reasons_size[ignored_file.reason] += ignored_file.size
+            
+            print(f"\nIgnored files by reason:")
+            for reason in sorted(reasons_count.keys()):
+                total_size = reasons_size[reason]
+                size_str = f"{total_size:,}" if total_size > 0 else "unknown"
+                print(f"  {reason:<40} {reasons_count[reason]:3d} files, {size_str:>12} bytes")
+    
     # Create documentation prompt
     prompt = create_documentation_prompt(files, str(code_dir), args.prompt)
     
@@ -291,6 +415,16 @@ def main():
         print(f"\nTotal files: {len(files)}")
         print(f"Total characters: {total_size:,}")
         print(f"Total lines of code: {total_loc:,}")
+        
+        if ignored_files_info:
+            print(f"\nIgnored files: {len(ignored_files_info)}")
+            if args.verbose:
+                print("Top 5 largest ignored files:")
+                sorted_ignored = sorted(ignored_files_info, key=lambda f: f.size, reverse=True)
+                for i, ignored_file in enumerate(sorted_ignored[:5], 1):
+                    size_str = f"{ignored_file.size:,}" if ignored_file.size > 0 else "unknown"
+                    print(f"  {i}. {ignored_file.path} ({size_str} bytes) - {ignored_file.reason}")
+        
         if api_key:
             print(f"Input tokens: {token_count.total_tokens:,}")
         else:
@@ -300,12 +434,13 @@ def main():
     print("Generating documentation with Gemini 2.5 Pro...")
     
     # Generate documentation
-    documentation = generate_documentation_with_gemini(prompt, api_key)
+    documentation = generate_documentation_with_gemini(prompt, api_key, args.response_prefix, args.system_instruction)
     
     # Add GenAI attribution footer
     footer = """
 
 ### Generated with GenAI
+
 This document was generated with [docgenie](https://github.com/spencermiles/docgenie) using Gemini 2.5. Some inaccuracies may be present as a result.
 """
     

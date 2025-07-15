@@ -7,63 +7,63 @@ Files in repository:
 
 Generate all necessary diagrams to visually represent this system. Include the following types of diagrams where applicable:
 
-## 1. System Architecture Diagram
+### System Architecture Diagram
 Create a high-level architecture diagram showing:
 - Major components/modules and their relationships
 - External dependencies and integrations
 - Data flow between components
 - Use Mermaid flowchart or C4 diagram syntax
 
-## 2. Component/Module Diagram
+### Component/Module Diagram
 Show the internal structure:
 - Individual modules/packages/namespaces
 - Dependencies between modules
 - Public interfaces and APIs
 - Use Mermaid flowchart or graph syntax
 
-## 3. Data Flow Diagram
+### Data Flow Diagram
 Illustrate how data moves through the system:
 - Data sources and destinations
 - Processing steps
 - Transformations and validations
 - Use Mermaid flowchart syntax
 
-## 4. API Flow Diagram (if applicable)
+### API Flow Diagram (if applicable)
 For web services and APIs:
 - Request/response flows
 - Authentication/authorization steps
 - Error handling paths
 - Use Mermaid sequence diagram syntax
 
-## 5. Database Schema Diagram (if applicable)
+### Database Schema Diagram (if applicable)
 If database models are present:
 - Entity relationships
 - Key constraints
 - Table structures
 - Use Mermaid ER diagram syntax
 
-## 6. Deployment Architecture (if applicable)
+### Deployment Architecture (if applicable)
 Show deployment structure:
 - Infrastructure components
 - Service distribution
 - Network connections
 - Use Mermaid flowchart syntax
 
-## 7. Sequence Diagrams for Key Processes
+### Sequence Diagrams for Key Processes
 For important workflows:
 - User authentication flow
 - Main business process flows
 - Error handling sequences
 - Use Mermaid sequence diagram syntax
 
-## 8. Class Relationships (if applicable)
+### Class Relationships (if applicable)
 For object-oriented codebases:
 - Class hierarchies
 - Interface implementations
 - Key relationships
 - Use Mermaid class diagram syntax
 
-## Instructions:
+### Instructions:
 - Format the output as a markdown document with proper headings and code blocks. 
 - Use proper Mermaid syntax for all diagrams
 - EQuote ALL mermaid keys to ensure no parse errors are present
