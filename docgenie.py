@@ -68,17 +68,22 @@ class IgnoredFile:
     reason: str
 
 
-def get_all_files_recursively(directory: Path, additional_excludes: List[str] = None, track_ignored: bool = False) -> tuple[List[FileContent], List[IgnoredFile]]:
+def get_all_files_recursively(directory: Path, additional_excludes: List[str] = None, additional_includes: List[str] = None, track_ignored: bool = False) -> tuple[List[FileContent], List[IgnoredFile]]:
     """
     Recursively get all files from the directory and return their contents.
     Skips binary files, lock files, migrations, and common non-code directories.
+    If additional_includes is provided, only files matching those patterns will be processed (whitelist mode).
     Returns tuple of (included_files, ignored_files) if track_ignored is True, else (included_files, [])
     """
     import fnmatch
     
     additional_excludes = additional_excludes or []
+    additional_includes = additional_includes or []
     files = []
     ignored_files_info = []
+    
+    # Determine if we're in whitelist mode (includes specified)
+    whitelist_mode = bool(additional_includes)
     
     for root, dirs, filenames in os.walk(directory):
         # Skip certain directories
@@ -102,19 +107,42 @@ def get_all_files_recursively(directory: Path, additional_excludes: List[str] = 
                     ))
                 continue
             
-            # Only include files with allowed extensions
-            if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
-                if track_ignored:
-                    try:
-                        file_size = file_path.stat().st_size
-                    except (OSError, PermissionError):
-                        file_size = 0
-                    ignored_files_info.append(IgnoredFile(
-                        path=str(relative_path),
-                        size=file_size,
-                        reason=f"Unsupported extension: {file_path.suffix or '(no extension)'}"
-                    ))
-                continue
+            # Check whitelist mode - if includes are specified, file must match at least one include pattern
+            if whitelist_mode:
+                include_matched = False
+                matched_include_pattern = None
+                for include_pattern in additional_includes:
+                    if fnmatch.fnmatch(str(relative_path), include_pattern) or fnmatch.fnmatch(filename, include_pattern):
+                        include_matched = True
+                        matched_include_pattern = include_pattern
+                        break
+                
+                if not include_matched:
+                    if track_ignored:
+                        try:
+                            file_size = file_path.stat().st_size
+                        except (OSError, PermissionError):
+                            file_size = 0
+                        ignored_files_info.append(IgnoredFile(
+                            path=str(relative_path),
+                            size=file_size,
+                            reason="Not matching any include pattern (whitelist mode)"
+                        ))
+                    continue
+            else:
+                # Original logic: Only include files with allowed extensions (when not in whitelist mode)
+                if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
+                    if track_ignored:
+                        try:
+                            file_size = file_path.stat().st_size
+                        except (OSError, PermissionError):
+                            file_size = 0
+                        ignored_files_info.append(IgnoredFile(
+                            path=str(relative_path),
+                            size=file_size,
+                            reason=f"Unsupported extension: {file_path.suffix or '(no extension)'}"
+                        ))
+                    continue
                 
             # Skip hidden files
             if filename.startswith('.'):
@@ -303,6 +331,11 @@ def main():
         help="Additional files/directories to exclude (can be used multiple times). Supports glob patterns."
     )
     parser.add_argument(
+        "--include",
+        action="append", 
+        help="Files/directories to include as whitelist (can be used multiple times). Supports glob patterns. If specified, only matching files will be processed."
+    )
+    parser.add_argument(
         "--prompt",
         default="prompts/readme.txt",
         help="Path to the prompt template file (default: prompts/readme.txt, relative to script location)"
@@ -336,8 +369,19 @@ def main():
     
     print(f"Scanning directory: {code_dir}")
     
+    # Show filtering mode
+    if args.include:
+        print(f"Whitelist mode: Only including files matching {len(args.include)} include pattern(s)")
+        for pattern in args.include:
+            print(f"  Include: {pattern}")
+    
+    if args.exclude:
+        print(f"Excluding files matching {len(args.exclude)} exclude pattern(s)")
+        for pattern in args.exclude:
+            print(f"  Exclude: {pattern}")
+    
     # Get all files recursively
-    files, ignored_files_info = get_all_files_recursively(code_dir, args.exclude, track_ignored=True)
+    files, ignored_files_info = get_all_files_recursively(code_dir, args.exclude, args.include, track_ignored=True)
     
     if not files:
         print("No suitable files found in the directory")

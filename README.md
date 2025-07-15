@@ -9,10 +9,12 @@ DocGenie is a Python CLI tool that analyzes your entire codebase and generates d
 ## Features
 
 - 🔍 **Recursive file scanning** - Analyzes all code files in your repository
+- 🎯 **Whitelist & Blacklist filtering** - Include only specific files or exclude unwanted ones with glob patterns
 - 🤖 **AI-powered documentation** - Uses Gemini 2.5 Pro for intelligent analysis
 - 📝 **Comprehensive output** - Generates structured documentation with multiple sections
 - ⚡ **Easy setup** - Works directly with `uv` for dependency management
 - 🔒 **Secure** - Uses `.env` files for API key management
+- 🎛️ **Response control** - Control LLM output format and starting text
 
 ## Quick Start
 
@@ -73,6 +75,24 @@ uv run docgenie.py --code ./repo --doc ./output.md --verbose --dry-run
 uv run docgenie.py --code ./repo --doc ./output.md --verbose
 ```
 
+#### Custom Inclusions (Whitelist)
+```bash
+# Only process Python files
+uv run docgenie.py --code ./repo --doc ./docs.md --include "*.py"
+
+# Only process specific file types  
+uv run docgenie.py --code ./repo --doc ./docs.md --include "*.ts" --include "*.js" --include "*.json"
+
+# Include files from specific directories only
+uv run docgenie.py --code ./repo --doc ./docs.md --include "src/**/*.ts" --include "lib/**/*.js"
+
+# Focus on documentation files
+uv run docgenie.py --code ./repo --doc ./docs.md --include "*.md" --include "*.txt" --include "*.rst"
+
+# Combine whitelist with exclusions - include all TypeScript but exclude tests
+uv run docgenie.py --code ./repo --doc ./docs.md --include "*.ts" --exclude "*.test.ts" --exclude "*.spec.ts"
+```
+
 #### Custom Exclusions
 ```bash
 # Exclude test files
@@ -92,6 +112,20 @@ uv run docgenie.py --code ./repo --doc ./docs.md \
   --exclude "*.backup.*"
 ```
 
+#### Response Control
+```bash
+# Control the first character/text of the LLM response
+uv run docgenie.py --code ./repo --doc ./docs.md --response-prefix "#"
+
+# Use system instructions to control behavior
+uv run docgenie.py --code ./repo --doc ./docs.md --system-instruction "You are a technical writer. Always start with a project title."
+
+# Combine response controls
+uv run docgenie.py --code ./repo --doc ./docs.md \
+  --response-prefix "## " \
+  --system-instruction "Write concise, developer-focused documentation"
+```
+
 ### Arguments
 
 - `--code` (required): Input directory containing the code to document
@@ -99,7 +133,11 @@ uv run docgenie.py --code ./repo --doc ./docs.md \
 - `--api-key` (optional): Gemini API key (overrides environment variables)
 - `--dry-run` (optional): Preview files and token count without making API call
 - `-v, --verbose` (optional): Show detailed file information and size analysis
+- `--include` (optional): Files/directories to include as whitelist (supports glob patterns, can be used multiple times). If specified, only matching files will be processed
 - `--exclude` (optional): Additional files/directories to exclude (supports glob patterns, can be used multiple times)
+- `--prompt` (optional): Path to custom prompt template file (default: prompts/readme.txt)
+- `--response-prefix` (optional): Specific character or text that the LLM should start its response with
+- `--system-instruction` (optional): System instruction to control the model's behavior and response format
 
 ## Configuration
 
@@ -147,18 +185,37 @@ DocGenie generates comprehensive documentation including:
 
 ## File Processing
 
-DocGenie uses a whitelist approach to intelligently process your codebase:
+DocGenie supports two modes for processing your codebase:
 
-### Included File Types
+### Default Mode (Extension-Based Filtering)
+When no `--include` patterns are specified, DocGenie uses a predefined list of allowed file extensions:
+
+#### Included File Types
 - **TypeScript/JavaScript**: `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`
 - **.NET**: `.cs`, `.fs`, `.vb`, `.csproj`, `.fsproj`, `.vbproj`, `.sln`
+- **Python/Shell**: `.py`, `.sh`
 - **Configuration**: `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.config`
 - **Documentation**: `.md`, `.txt`, `.rst`, `.adoc`
 - **Web/Styling**: `.html`, `.css`, `.scss`, `.sass`, `.less`
 - **Database/API**: `.sql`, `.graphql`, `.gql`
 - **Build files**: `Dockerfile`, `Makefile`, etc. (files without extensions)
 
-### Automatically Excluded
+### Whitelist Mode (Custom Includes)
+When `--include` patterns are specified, **only** files matching those patterns are processed, regardless of extension:
+
+```bash
+# Only process specific file types
+--include "*.py" --include "*.md"
+
+# Include files from specific directories
+--include "src/**/*.ts" --include "docs/**/*"
+
+# Complex patterns
+--include "**/*.{js,ts,json}" --include "README.*"
+```
+
+### Always Excluded
+Regardless of mode, these are automatically excluded:
 - **Lock files**: `yarn.lock`, `package-lock.json`, `poetry.lock`, `Pipfile.lock`, `composer.lock`, `Gemfile.lock`, `go.sum`, `cargo.lock`
 - **Directories**: `node_modules`, `__pycache__`, `.git`, `.venv`, `build`, `dist`, `migrations`
 - **Large files**: Files over 1MB
@@ -166,7 +223,7 @@ DocGenie uses a whitelist approach to intelligently process your codebase:
 - **Binary files**: Images, executables, archives, etc.
 
 ### Custom Exclusions
-Use the `--exclude` flag with glob patterns for additional filtering:
+Use the `--exclude` flag with glob patterns for additional filtering (works in both modes):
 
 ```bash
 # Exclude patterns
@@ -175,6 +232,13 @@ Use the `--exclude` flag with glob patterns for additional filtering:
 --exclude "legacy/**"       # Entire legacy directory tree
 --exclude "src/temp/*"      # Temporary files in src
 ```
+
+### Processing Priority
+1. **Always excluded** files are skipped first
+2. **Include patterns** are checked (if specified) - file must match at least one
+3. **Extension filtering** is applied (default mode only)
+4. **Exclude patterns** are checked - file must not match any
+5. **File size and readability** checks are performed
 
 ## Requirements
 
