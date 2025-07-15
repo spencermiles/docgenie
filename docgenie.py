@@ -42,6 +42,8 @@ ALLOWED_EXTENSIONS = {
     '.html', '.css', '.scss', '.sass', '.less',
     '.sql', '.graphql', '.gql',
     '.sh', '.py',
+    # Terraform
+    '.tf', '.jinja',
     # Build & Config files (without extension)
     ''  # This allows files without extensions like Dockerfile, Makefile, etc.
 }
